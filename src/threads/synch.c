@@ -223,7 +223,7 @@ lock_acquire (struct lock *lock)
 
   struct thread *cur = thread_current ();
 
-  if (lock->holder != NULL)
+  if (!thread_mlfqs && lock->holder != NULL)
     {
       cur->lock_waiting_on = lock;
       struct lock *curr_lock = lock;
@@ -246,10 +246,13 @@ lock_acquire (struct lock *lock)
 
   sema_down (&lock->semaphore);
 
-  cur->lock_waiting_on = NULL;
   lock->holder = cur;
-  list_push_back (&cur->locks_held, &lock->elem);
-  lock->max_priority = lock_get_max_priority (lock);
+  if (!thread_mlfqs)
+    {
+      cur->lock_waiting_on = NULL;
+      list_push_back (&cur->locks_held, &lock->elem);
+      lock->max_priority = lock_get_max_priority (lock);
+    }
 }
 
 /** Tries to acquires LOCK and returns true if successful or false
@@ -270,8 +273,11 @@ lock_try_acquire (struct lock *lock)
   if (success)
     {
       lock->holder = thread_current ();
-      list_push_back (&thread_current ()->locks_held, &lock->elem);
-      lock->max_priority = lock_get_max_priority (lock);
+      if (!thread_mlfqs)
+        {
+          list_push_back (&thread_current ()->locks_held, &lock->elem);
+          lock->max_priority = lock_get_max_priority (lock);
+        }
     }
   return success;
 }
@@ -289,8 +295,11 @@ lock_release (struct lock *lock)
 
   struct thread *cur = thread_current ();
 
-  list_remove (&lock->elem);
-  thread_recompute_priority (cur);
+  if (!thread_mlfqs)
+    {
+      list_remove (&lock->elem);
+      thread_recompute_priority (cur);
+    }
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);

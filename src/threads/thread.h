@@ -101,6 +101,9 @@ struct thread
     struct list locks_held;             /**< Locks held by this thread. */
     struct lock *lock_waiting_on;       /**< Lock thread is waiting on. */
 
+    int nice;                           /**< Niceness value. */
+    int recent_cpu;                     /**< Recent CPU usage (fixed-point). */
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
@@ -114,6 +117,7 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+extern int load_avg;
 extern struct list sleep_list;
 
 void thread_init (void);
@@ -151,5 +155,12 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+struct thread *thread_idle (void);
+void thread_mlfqs_tick (void);
+void thread_mlfqs_update_load_avg_and_recent_cpu (void);
+void thread_mlfqs_update_priorities (void);
+bool thread_mlfqs_should_yield (void);
+void thread_calculate_priority (struct thread *t);
 
 #endif /**< threads/thread.h */

@@ -188,12 +188,25 @@ timer_interrupt (struct intr_frame *args UNUSED)
         {
           e = list_remove (e);
           thread_unblock (t);
-          if (t->priority > thread_current ()->priority)
+          if (thread_current () == thread_idle () || t->priority > thread_current ()->priority)
             yield_needed = true;
         }
       else
         {
           e = list_next (e);
+        }
+    }
+
+  if (thread_mlfqs)
+    {
+      thread_mlfqs_tick ();
+      if (ticks % TIMER_FREQ == 0)
+        thread_mlfqs_update_load_avg_and_recent_cpu ();
+      if (ticks % 4 == 0)
+        {
+          thread_mlfqs_update_priorities ();
+          if (thread_mlfqs_should_yield ())
+            yield_needed = true;
         }
     }
 
