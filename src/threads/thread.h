@@ -95,6 +95,8 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
 
+    int64_t wake_up_tick;               /**< Tick count to wake up at. */
+
     int base_priority;                  /**< Base priority. */
     struct list locks_held;             /**< Locks held by this thread. */
     struct lock *lock_waiting_on;       /**< Lock thread is waiting on. */
@@ -112,6 +114,7 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+extern struct list sleep_list;
 
 void thread_init (void);
 void thread_start (void);
