@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 struct lock;
 
@@ -20,6 +21,20 @@ enum thread_status
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t) -1)          /**< Error value for tid_t. */
+
+#ifdef USERPROG
+struct child_status
+  {
+    tid_t tid;
+    int exit_status;
+    bool waited;
+    bool exited;
+    struct semaphore sema;
+    struct lock lock;
+    int ref_cnt;
+    struct list_elem elem;
+  };
+#endif
 
 /** Thread priorities. */
 #define PRI_MIN 0                       /**< Lowest priority. */
@@ -107,6 +122,9 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
+    struct list children;               /**< List of children (struct child_status). */
+    struct child_status *child_status;  /**< Child status tracking this thread. */
+    int exit_status;                    /**< Exit status. */
 #endif
 
     /* Owned by thread.c. */
