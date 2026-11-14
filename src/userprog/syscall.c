@@ -142,6 +142,19 @@ syscall_handler (struct intr_frame *f)
       }
       break;
 
+    case SYS_OPEN:
+      validate_user_range ((const uint8_t *) f->esp + 4, sizeof (char *));
+      {
+        const char *file = (const char *) *((uintptr_t *) f->esp + 1);
+        validate_user_string (file);
+        f->eax = -1;
+      }
+      break;
+
+    case SYS_CLOSE:
+      validate_user_range ((const uint8_t *) f->esp + 4, sizeof (int));
+      break;
+
     default:
       terminate_invalid_process ();
       break;

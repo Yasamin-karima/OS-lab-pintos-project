@@ -19,12 +19,10 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
-struct exec_info
+struct exec_args
   {
     char *fn_copy;
-    struct child_status *child;
-    struct semaphore sema_load;
-    bool load_success;
+    struct child_status *cp;
   };
 
 static thread_func start_process NO_RETURN;
@@ -39,11 +37,10 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
-  char *fn_prog;
-  char *prog_name;
-  char *save_ptr;
+  char prog_name[16];
+  size_t i;
   tid_t tid;
-  struct exec_info info;
+  struct exec_args args;
   struct thread *cur = thread_current ();
 
   /* Make a copy of FILE_NAME.
@@ -53,67 +50,54 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
-  fn_prog = palloc_get_page (0);
-  if (fn_prog == NULL)
+  /* Extract program name for thread_create(). */
+  for (i = 0; i < sizeof prog_name - 1 && fn_copy[i] != '\0' && fn_copy[i] != ' '; i++)
+    prog_name[i] = fn_copy[i];
+  prog_name[i] = '\0';
+
+  if (prog_name[0] == '\0')
     {
       palloc_free_page (fn_copy);
       return TID_ERROR;
     }
-  strlcpy (fn_prog, file_name, PGSIZE);
 
-  prog_name = strtok_r (fn_prog, " ", &save_ptr);
-  if (prog_name == NULL)
+  struct child_status *cp = malloc (sizeof (struct child_status));
+  if (cp == NULL)
     {
       palloc_free_page (fn_copy);
-      palloc_free_page (fn_prog);
       return TID_ERROR;
     }
 
-  struct child_status *child = malloc (sizeof (struct child_status));
-  if (child == NULL)
-    {
-      palloc_free_page (fn_copy);
-      palloc_free_page (fn_prog);
-      return TID_ERROR;
-    }
+  cp->tid = TID_ERROR;
+  cp->exit_status = -1;
+  cp->waited = false;
+  cp->exited = false;
+  cp->load_success = false;
+  cp->ref_count = 2;
+  lock_init (&cp->ref_lock);
+  sema_init (&cp->load_sema, 0);
+  sema_init (&cp->wait_sema, 0);
 
-  child->tid = TID_ERROR;
-  child->exit_status = -1;
-  child->waited = false;
-  child->exited = false;
-  child->ref_cnt = 2;
-  sema_init (&child->sema, 0);
-  lock_init (&child->lock);
-  list_push_back (&cur->children, &child->elem);
-
-  info.fn_copy = fn_copy;
-  info.child = child;
-  sema_init (&info.sema_load, 0);
-  info.load_success = false;
+  args.fn_copy = fn_copy;
+  args.cp = cp;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (prog_name, PRI_DEFAULT, start_process, &info);
-  palloc_free_page (fn_prog);
-
+  tid = thread_create (prog_name, PRI_DEFAULT, start_process, &args);
   if (tid == TID_ERROR)
     {
       palloc_free_page (fn_copy);
-      list_remove (&child->elem);
-      free (child);
+      free (cp);
       return TID_ERROR;
     }
 
-  sema_down (&info.sema_load);
+  cp->tid = tid;
+  list_push_back (&cur->children, &cp->elem);
+  sema_down (&cp->load_sema);
 
-  if (!info.load_success)
+  if (!cp->load_success)
     {
-      list_remove (&child->elem);
-      lock_acquire (&child->lock);
-      child->ref_cnt--;
-      bool should_free = (child->ref_cnt == 0);
-      lock_release (&child->lock);
-      if (should_free)
-        free (child);
+      list_remove (&cp->elem);
+      release_child_status (cp);
       return TID_ERROR;
     }
 
@@ -125,14 +109,14 @@ process_execute (const char *file_name)
 static void
 start_process (void *aux)
 {
-  struct exec_info *info = aux;
-  char *file_name = info->fn_copy;
+  struct exec_args *args = aux;
+  char *file_name = args->fn_copy;
+  struct child_status *cp = args->cp;
+  struct thread *cur = thread_current ();
   struct intr_frame if_;
   bool success;
-  struct thread *cur = thread_current ();
 
-  cur->child_status = info->child;
-  cur->child_status->tid = cur->tid;
+  cur->cp = cp;
 
   char *argv[128];
   int argc = 0;
@@ -157,9 +141,9 @@ start_process (void *aux)
   else
     success = false;
 
-  info->load_success = success;
   palloc_free_page (file_name);
-  sema_up (&info->sema_load);
+  cp->load_success = success;
+  sema_up (&cp->load_sema);
 
   /* If load failed, quit. */
   if (!success)
@@ -189,36 +173,29 @@ process_wait (tid_t child_tid)
 {
   struct thread *cur = thread_current ();
   struct list_elem *e;
-  struct child_status *child = NULL;
+  struct child_status *cp = NULL;
 
   for (e = list_begin (&cur->children); e != list_end (&cur->children); e = list_next (e))
     {
-      struct child_status *cs = list_entry (e, struct child_status, elem);
-      if (cs->tid == child_tid)
+      struct child_status *candidate = list_entry (e, struct child_status, elem);
+      if (candidate->tid == child_tid)
         {
-          child = cs;
+          cp = candidate;
           break;
         }
     }
 
-  if (child == NULL || child->waited)
+  if (cp == NULL || cp->waited)
     return -1;
 
-  child->waited = true;
-  sema_down (&child->sema);
+  cp->waited = true;
+  sema_down (&cp->wait_sema);
 
-  int exit_status = child->exit_status;
-  list_remove (&child->elem);
+  int status = cp->exit_status;
+  list_remove (&cp->elem);
+  release_child_status (cp);
 
-  lock_acquire (&child->lock);
-  child->ref_cnt--;
-  bool should_free = (child->ref_cnt == 0);
-  lock_release (&child->lock);
-
-  if (should_free)
-    free (child);
-
-  return exit_status;
+  return status;
 }
 
 /** Free the current process's resources. */
@@ -231,31 +208,20 @@ process_exit (void)
   if (cur->pagedir != NULL)
     printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
 
-  if (cur->child_status != NULL)
+  if (cur->cp != NULL)
     {
-      struct child_status *cs = cur->child_status;
-      lock_acquire (&cs->lock);
-      cs->exit_status = cur->exit_status;
-      cs->exited = true;
-      sema_up (&cs->sema);
-      cs->ref_cnt--;
-      bool should_free = (cs->ref_cnt == 0);
-      lock_release (&cs->lock);
-      if (should_free)
-        free (cs);
-      cur->child_status = NULL;
+      cur->cp->exit_status = cur->exit_status;
+      cur->cp->exited = true;
+      sema_up (&cur->cp->wait_sema);
+      release_child_status (cur->cp);
+      cur->cp = NULL;
     }
 
   while (!list_empty (&cur->children))
     {
       struct list_elem *e = list_pop_front (&cur->children);
-      struct child_status *cs = list_entry (e, struct child_status, elem);
-      lock_acquire (&cs->lock);
-      cs->ref_cnt--;
-      bool should_free = (cs->ref_cnt == 0);
-      lock_release (&cs->lock);
-      if (should_free)
-        free (cs);
+      struct child_status *cp = list_entry (e, struct child_status, elem);
+      release_child_status (cp);
     }
 
   /* Destroy the current process's page directory and switch back

@@ -29,11 +29,15 @@ struct child_status
     int exit_status;
     bool waited;
     bool exited;
-    struct semaphore sema;
-    struct lock lock;
-    int ref_cnt;
+    bool load_success;
+    int ref_count;
+    struct lock ref_lock;
+    struct semaphore load_sema;
+    struct semaphore wait_sema;
     struct list_elem elem;
   };
+
+void release_child_status (struct child_status *cp);
 #endif
 
 /** Thread priorities. */
@@ -123,7 +127,7 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
     struct list children;               /**< List of children (struct child_status). */
-    struct child_status *child_status;  /**< Child status tracking this thread. */
+    struct child_status *cp;            /**< Child status tracking this thread. */
     int exit_status;                    /**< Exit status. */
 #endif
 

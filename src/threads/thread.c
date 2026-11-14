@@ -14,6 +14,7 @@
 #include "threads/vaddr.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "threads/malloc.h"
 #endif
 
 /** Random value for struct thread's `magic' member.
@@ -676,7 +677,7 @@ init_thread (struct thread *t, const char *name, int priority)
 #ifdef USERPROG
   t->pagedir = NULL;
   list_init (&t->children);
-  t->child_status = NULL;
+  t->cp = NULL;
   t->exit_status = -1;
 #endif
 
@@ -798,3 +799,22 @@ allocate_tid (void)
 /** Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+#ifdef USERPROG
+/** Safely decrements cp->ref_count under cp->ref_lock.
+   If ref_count == 0 after releasing the lock, frees cp. */
+void
+release_child_status (struct child_status *cp)
+{
+  if (cp == NULL)
+    return;
+
+  lock_acquire (&cp->ref_lock);
+  cp->ref_count--;
+  bool should_free = (cp->ref_count == 0);
+  lock_release (&cp->ref_lock);
+
+  if (should_free)
+    free (cp);
+}
+#endif
