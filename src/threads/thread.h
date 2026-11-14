@@ -7,6 +7,16 @@
 #include "threads/synch.h"
 
 struct lock;
+struct file;
+
+#ifdef USERPROG
+struct fd_entry
+  {
+    int fd;
+    struct file *file;
+    struct list_elem elem;
+  };
+#endif
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -129,6 +139,9 @@ struct thread
     struct list children;               /**< List of children (struct child_status). */
     struct child_status *cp;            /**< Child status tracking this thread. */
     int exit_status;                    /**< Exit status. */
+    struct list fd_list;                /**< List of open file descriptors (struct fd_entry). */
+    int next_fd;                        /**< Next fd number to assign (starts at 2). */
+    struct file *exec_file;             /**< Open executable file of this process. */
 #endif
 
     /* Owned by thread.c. */

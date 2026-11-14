@@ -679,6 +679,9 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init (&t->children);
   t->cp = NULL;
   t->exit_status = -1;
+  list_init (&t->fd_list);
+  t->next_fd = 2;
+  t->exec_file = NULL;
 #endif
 
   old_level = intr_disable ();

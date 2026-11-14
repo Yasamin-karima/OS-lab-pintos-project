@@ -1,4 +1,5 @@
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -208,6 +209,26 @@ process_exit (void)
   if (cur->pagedir != NULL)
     printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
 
+  /* Release filesys_lock if held by current thread to prevent deadlocks. */
+  if (lock_held_by_current_thread (&filesys_lock))
+    lock_release (&filesys_lock);
+
+  /* Close all open file descriptors and the executable file. */
+  lock_acquire (&filesys_lock);
+  while (!list_empty (&cur->fd_list))
+    {
+      struct list_elem *e = list_pop_front (&cur->fd_list);
+      struct fd_entry *entry = list_entry (e, struct fd_entry, elem);
+      file_close (entry->file);
+      free (entry);
+    }
+  if (cur->exec_file != NULL)
+    {
+      file_close (cur->exec_file);
+      cur->exec_file = NULL;
+    }
+  lock_release (&filesys_lock);
+
   if (cur->cp != NULL)
     {
       cur->cp->exit_status = cur->exit_status;
@@ -345,10 +366,11 @@ load (const char *file_name, void (**eip) (void), void **esp,
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
-    goto done;
+    return false;
   process_activate ();
 
   /* Open executable file. */
+  lock_acquire (&filesys_lock);
   file = filesys_open (file_name);
   if (file == NULL) 
     {
@@ -439,7 +461,16 @@ load (const char *file_name, void (**eip) (void), void **esp,
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  if (success)
+    {
+      file_deny_write (file);
+      t->exec_file = file;
+    }
+  else
+    {
+      file_close (file);
+    }
+  lock_release (&filesys_lock);
   return success;
 }
 
